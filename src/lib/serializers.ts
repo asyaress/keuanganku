@@ -3,8 +3,10 @@ function toNumber(value: unknown) {
   return Number(value);
 }
 
-function toIso(value: unknown) {
-  return value instanceof Date ? value.toISOString() : value;
+function toIso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') return value;
+  return value == null ? '' : String(value);
 }
 
 export function serializeWallet(wallet: any) {

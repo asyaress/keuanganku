@@ -2,6 +2,17 @@ import { Card } from '@/components/ui';
 import { TransactionForm } from '@/components/transaction-form';
 import { getTransactionFormData } from '@/lib/data';
 
+function errorMessage(error?: string) {
+  if (error === 'edit') return 'Transaksi tidak ditemukan atau sudah tidak bisa diedit.';
+  if (error === 'nominal') return 'Nominal harus lebih dari Rp0.';
+  if (error === 'tanggal') return 'Tanggal transaksi tidak valid.';
+  if (error === 'kategori') return 'Pilih kategori yang sesuai dengan jenis transaksi.';
+  if (error === 'wallet') return 'Dompet utama belum tersedia. Jalankan seed atau buat data dompet dulu.';
+  if (error === 'investment-wallet') return 'Dompet investasi belum tersedia. Jalankan seed atau buat data dompet investasi dulu.';
+  if (error === 'jenis') return 'Jenis transaksi tidak dikenali.';
+  return 'Ada data yang belum lengkap. Cek nominal, dompet, kategori, atau tanggal lalu simpan lagi.';
+}
+
 export default async function CatatPage({
   searchParams,
 }: {
@@ -39,9 +50,7 @@ export default async function CatatPage({
 
       {params.error ? (
         <Card className="animate-fade-up border-0 bg-[#fff5f2] p-4 text-sm font-medium text-[#d1695b] [animation-delay:60ms]">
-          {params.error === 'edit'
-            ? 'Transaksi tidak ditemukan atau sudah tidak bisa diedit.'
-            : 'Ada data yang belum lengkap. Cek nominal, dompet, atau tanggal lalu simpan lagi.'}
+          {errorMessage(params.error)}
         </Card>
       ) : null}
 

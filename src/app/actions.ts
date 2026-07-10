@@ -2,12 +2,49 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { AssetType, CategoryType, TransactionType, WalletType } from '@prisma/client';
+import { AssetType, CategoryType, Prisma, TransactionType, WalletType } from '@prisma/client';
 import dayjs from 'dayjs';
 import { prisma } from '@/lib/prisma';
 
+const maxAmount = 9_999_999_999_999;
+
 function normalizePath(path: string) {
-  return path.startsWith('/') ? path : '/dashboard';
+  return path.startsWith('/') && !path.startsWith('//') ? path : '/dashboard';
+}
+
+function appendQuery(path: string, params: Record<string, string | number>) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => searchParams.set(key, String(value)));
+  return `${path}${path.includes('?') ? '&' : '?'}${searchParams.toString()}`;
+}
+
+function parseMoney(value: FormDataEntryValue | null) {
+  const digits = String(value || '').replace(/[^\d]/g, '');
+  if (!digits) return 0;
+  const amount = Number(digits);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function parseId(value: FormDataEntryValue | null) {
+  const id = Number(value || 0);
+  return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+function parseTransactionDate(value: FormDataEntryValue | null) {
+  const raw = String(value || '').trim();
+  if (!raw) return new Date();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+
+  const [year, month, day] = raw.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+
+  return date;
+}
+
+function cleanText(value: FormDataEntryValue | null, fallback = '') {
+  const text = String(value || '').trim();
+  return (text || fallback).slice(0, 180);
 }
 
 async function refreshAll() {
@@ -17,21 +54,33 @@ async function refreshAll() {
   revalidatePath('/investasi');
 }
 
+async function findCategoryId(categoryId: number, type: CategoryType) {
+  if (!categoryId) return null;
+  const category = await prisma.category.findFirst({
+    where: { id: categoryId, type },
+    select: { id: true },
+  });
+  return category?.id ?? null;
+}
+
 export async function createTransaction(formData: FormData) {
   const entryType = String(formData.get('entryType') || 'expense');
-  const amount = Number(formData.get('amount') || 0);
-  const note = String(formData.get('note') || '');
-  const transactionDateRaw = String(formData.get('transactionDate') || '');
-  const categoryIdRaw = String(formData.get('categoryId') || '');
+  const amount = parseMoney(formData.get('amount'));
+  const note = cleanText(formData.get('note'));
+  const transactionDate = parseTransactionDate(formData.get('transactionDate'));
+  const categoryId = parseId(formData.get('categoryId'));
   const assetTypeRaw = String(formData.get('assetType') || '');
-  const subType = String(formData.get('subType') || '');
-  const assetName = String(formData.get('assetName') || '');
+  const subType = cleanText(formData.get('subType'));
+  const assetName = cleanText(formData.get('assetName'), assetTypeRaw === 'EMAS' ? 'Emas' : 'Reksadana');
 
-  if (!amount || amount <= 0) {
+  if (!amount || amount <= 0 || amount > maxAmount) {
     redirect('/catat?error=nominal');
   }
 
-  const transactionDate = transactionDateRaw ? new Date(transactionDateRaw) : new Date();
+  if (!transactionDate) {
+    redirect('/catat?error=tanggal');
+  }
+
   const mainWallet = await prisma.wallet.findFirst({ where: { type: WalletType.MAIN } });
   const investmentWallet = await prisma.wallet.findFirst({ where: { type: WalletType.INVESTMENT } });
 
@@ -40,29 +89,41 @@ export async function createTransaction(formData: FormData) {
   }
 
   if (entryType === 'income') {
+    const safeCategoryId = await findCategoryId(categoryId, CategoryType.INCOME);
+    if (!safeCategoryId) redirect('/catat?error=kategori');
+
     await prisma.transaction.create({
       data: {
         walletId: mainWallet.id,
-        categoryId: categoryIdRaw ? Number(categoryIdRaw) : null,
+        categoryId: safeCategoryId,
         type: TransactionType.INCOME,
         amount,
         note,
         transactionDate,
       },
     });
+
+    await refreshAll();
+    redirect('/catat?saved=1');
   }
 
   if (entryType === 'expense') {
+    const safeCategoryId = await findCategoryId(categoryId, CategoryType.EXPENSE);
+    if (!safeCategoryId) redirect('/catat?error=kategori');
+
     await prisma.transaction.create({
       data: {
         walletId: mainWallet.id,
-        categoryId: categoryIdRaw ? Number(categoryIdRaw) : null,
+        categoryId: safeCategoryId,
         type: TransactionType.EXPENSE,
         amount,
         note,
         transactionDate,
       },
     });
+
+    await refreshAll();
+    redirect('/catat?saved=1');
   }
 
   if (entryType === 'investment') {
@@ -77,7 +138,7 @@ export async function createTransaction(formData: FormData) {
         walletId: investmentWallet.id,
         assetType: safeAssetType,
         subType: safeAssetType === AssetType.REKSADANA ? subType || null : null,
-        assetName: assetName || (safeAssetType === AssetType.REKSADANA ? 'Reksadana' : 'Emas'),
+        assetName,
         totalInvested: amount,
         totalValue: amount,
       },
@@ -89,7 +150,7 @@ export async function createTransaction(formData: FormData) {
         categoryId: category?.id ?? null,
         type: TransactionType.INVESTMENT_BUY,
         amount,
-        note: note || `Beli ${assetName || (safeAssetType === AssetType.REKSADANA ? 'Reksadana' : 'Emas')}`,
+        note: note || `Beli ${assetName}`,
         transactionDate,
         assetId: asset.id,
       },
@@ -106,18 +167,20 @@ export async function createTransaction(formData: FormData) {
     } catch {
       // Keep transaction flow working even if snapshot table is not migrated yet.
     }
+
+    await refreshAll();
+    redirect('/catat?saved=1');
   }
 
-  await refreshAll();
-  redirect('/catat?saved=1');
+  redirect('/catat?error=jenis');
 }
 
 export async function voidTransaction(formData: FormData) {
-  const transactionId = Number(formData.get('transactionId') || 0);
+  const transactionId = parseId(formData.get('transactionId'));
   const returnTo = normalizePath(String(formData.get('returnTo') || '/dashboard'));
 
   if (!transactionId) {
-    redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=void`);
+    redirect(appendQuery(returnTo, { error: 'void' }));
   }
 
   const tx = await prisma.transaction.findUnique({
@@ -126,10 +189,10 @@ export async function voidTransaction(formData: FormData) {
   });
 
   if (!tx || tx.isVoided) {
-    redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=void`);
+    redirect(appendQuery(returnTo, { error: 'void' }));
   }
 
-  await prisma.$transaction(async (db: any) => {
+  await prisma.$transaction(async (db: Prisma.TransactionClient) => {
     await db.transaction.update({
       where: { id: transactionId },
       data: { isVoided: true, voidedAt: new Date() },
@@ -144,26 +207,28 @@ export async function voidTransaction(formData: FormData) {
   });
 
   await refreshAll();
-  redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}voided=1`);
+  redirect(appendQuery(returnTo, { voided: 1 }));
 }
 
 export async function updateTransaction(formData: FormData) {
-  const transactionId = Number(formData.get('transactionId') || 0);
+  const transactionId = parseId(formData.get('transactionId'));
   const returnTo = normalizePath(String(formData.get('returnTo') || '/dashboard'));
-  const amount = Number(formData.get('amount') || 0);
-  const note = String(formData.get('note') || '');
-  const transactionDateRaw = String(formData.get('transactionDate') || '');
-  const categoryIdRaw = String(formData.get('categoryId') || '');
+  const amount = parseMoney(formData.get('amount'));
+  const note = cleanText(formData.get('note'));
+  const transactionDate = parseTransactionDate(formData.get('transactionDate'));
+  const categoryId = parseId(formData.get('categoryId'));
 
   if (!transactionId) {
     redirect('/catat?error=edit');
   }
 
-  if (!amount || amount <= 0) {
-    redirect(`/catat?editId=${transactionId}&error=nominal`);
+  if (!amount || amount <= 0 || amount > maxAmount) {
+    redirect(appendQuery('/catat', { editId: transactionId, returnTo, error: 'nominal' }));
   }
 
-  const transactionDate = transactionDateRaw ? new Date(transactionDateRaw) : new Date();
+  if (!transactionDate) {
+    redirect(appendQuery('/catat', { editId: transactionId, returnTo, error: 'tanggal' }));
+  }
 
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -174,7 +239,7 @@ export async function updateTransaction(formData: FormData) {
     redirect('/catat?error=edit');
   }
 
-  await prisma.$transaction(async (db: any) => {
+  await prisma.$transaction(async (db: Prisma.TransactionClient) => {
     if (tx.type === TransactionType.INVESTMENT_BUY) {
       const investmentCategory = await db.category.findFirst({ where: { type: CategoryType.INVESTMENT } });
       const delta = amount - Number(tx.amount);
@@ -185,7 +250,7 @@ export async function updateTransaction(formData: FormData) {
           amount,
           note,
           transactionDate,
-          categoryId: categoryIdRaw ? Number(categoryIdRaw) : (investmentCategory?.id ?? tx.categoryId ?? null),
+          categoryId: investmentCategory?.id ?? tx.categoryId ?? null,
         },
       });
 
@@ -201,10 +266,29 @@ export async function updateTransaction(formData: FormData) {
               totalValue: nextTotalValue,
             },
           });
+
+          try {
+            await db.investmentSnapshot.upsert({
+              where: { assetId_monthKey: { assetId: tx.assetId, monthKey: dayjs(transactionDate).format('YYYY-MM') } },
+              update: { value: nextTotalValue },
+              create: { assetId: tx.assetId, monthKey: dayjs(transactionDate).format('YYYY-MM'), value: nextTotalValue },
+            });
+          } catch {
+            // Keep edit flow working even if snapshot table is not migrated yet.
+          }
         }
       }
 
       return;
+    }
+
+    const expectedCategoryType = tx.type === TransactionType.INCOME ? CategoryType.INCOME : CategoryType.EXPENSE;
+    const safeCategory = categoryId
+      ? await db.category.findFirst({ where: { id: categoryId, type: expectedCategoryType }, select: { id: true } })
+      : null;
+
+    if (!safeCategory) {
+      redirect(appendQuery('/catat', { editId: transactionId, returnTo, error: 'kategori' }));
     }
 
     await db.transaction.update({
@@ -213,13 +297,13 @@ export async function updateTransaction(formData: FormData) {
         amount,
         note,
         transactionDate,
-        categoryId: categoryIdRaw ? Number(categoryIdRaw) : null,
+        categoryId: safeCategory.id,
       },
     });
   });
 
   await refreshAll();
-  redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}edited=1`);
+  redirect(appendQuery(returnTo, { edited: 1 }));
 }
 
 export async function updateInvestmentMonthlyValues(formData: FormData) {
@@ -245,7 +329,7 @@ export async function updateInvestmentMonthlyValues(formData: FormData) {
     redirect('/investasi?error=asset');
   }
 
-  await prisma.$transaction(async (db: any) => {
+  await prisma.$transaction(async (db: Prisma.TransactionClient) => {
     for (const assetId of requestedAssetIds) {
       if (!activeAssetIds.has(assetId)) continue;
 

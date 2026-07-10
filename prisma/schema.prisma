@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum WalletType {
+  MAIN
+  INVESTMENT
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+  INVESTMENT
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  INVESTMENT_BUY
+}
+
+enum AssetType {
+  REKSADANA
+  EMAS
+}
+
+model Wallet {
+  id           Int               @id @default(autoincrement())
+  name         String
+  type         WalletType
+  openingSaldo Decimal           @default(0) @db.Decimal(15, 2)
+  transactions Transaction[]
+  assets       InvestmentAsset[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@map("wallet")
+}
+
+model Category {
+  id           Int           @id @default(autoincrement())
+  name         String
+  type         CategoryType
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@map("category")
+}
+
+model Transaction {
+  id              Int              @id @default(autoincrement())
+  walletId        Int
+  wallet          Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  categoryId      Int?
+  category        Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  type            TransactionType
+  amount          Decimal          @db.Decimal(15, 2)
+  note            String?
+  transactionDate DateTime
+  assetId         Int?
+  asset           InvestmentAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  isVoided        Boolean          @default(false)
+  voidedAt        DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([walletId, transactionDate])
+  @@index([isVoided])
+  @@map("transaction")
+}
+
+model InvestmentAsset {
+  id            Int                  @id @default(autoincrement())
+  walletId      Int
+  wallet        Wallet               @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  assetType     AssetType
+  subType       String?
+  assetName     String
+  platform      String?
+  quantity      Decimal?             @db.Decimal(15, 4)
+  avgBuyPrice   Decimal?             @db.Decimal(15, 2)
+  currentPrice  Decimal?             @db.Decimal(15, 2)
+  totalInvested Decimal              @default(0) @db.Decimal(15, 2)
+  totalValue    Decimal              @default(0) @db.Decimal(15, 2)
+  isVoided      Boolean              @default(false)
+  voidedAt      DateTime?
+  transactions  Transaction[]
+  snapshots     InvestmentSnapshot[]
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@map("investmentasset")
+}
+
+model InvestmentSnapshot {
+  id        Int             @id @default(autoincrement())
+  assetId   Int
+  asset     InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  monthKey  String          @db.VarChar(7)
+  value     Decimal         @db.Decimal(15, 2)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([assetId, monthKey])
+  @@index([monthKey])
+  @@map("investmentsnapshot")
+}

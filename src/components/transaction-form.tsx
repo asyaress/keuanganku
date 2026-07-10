@@ -32,8 +32,7 @@ function mapTxTypeToEntryType(txType?: EditTransaction['type']) {
 }
 
 function toDateInputValue(value?: string) {
-  if (!value) return '';
-  const date = new Date(value);
+  const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) return '';
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -76,6 +75,7 @@ export function TransactionForm({
   const initialCategoryId = editTransaction?.categoryId ?? null;
   const formAction = isEditing ? updateTransaction : createTransaction;
   const effectiveReturnTo = returnTo || '/dashboard';
+  const dateValue = toDateInputValue(editTransaction?.transactionDate);
 
   return (
     <form action={formAction} className="space-y-4">
@@ -87,18 +87,11 @@ export function TransactionForm({
       {isEditing ? (
         <Card className="animate-fade-up border border-[#d8e8e8] bg-[#f6fbfb] p-4">
           <p className="text-sm font-semibold text-app-text">Mode edit transaksi</p>
-          <p className="mt-1 text-sm leading-6 text-app-muted">Ubah data yang salah lalu simpan. Jenis transaksi tidak diubah dari menu ini.</p>
+          <p className="mt-1 text-sm leading-6 text-app-muted">Ubah nominal, kategori, tanggal, atau catatan. Jenis transaksi tetap mengikuti data awal.</p>
         </Card>
       ) : null}
 
-      <Card className="animate-fade-up border border-[#d8e8e8] bg-[#f6fbfb] p-4">
-        <p className="text-sm font-semibold text-app-text">Petunjuk cepat</p>
-        <p className="mt-1 text-sm leading-6 text-app-muted">
-          Pilih jenis transaksi, isi nominal, lalu pilih kategori. Jika ragu, isi catatan singkat agar mudah dicek lagi nanti.
-        </p>
-      </Card>
-
-      <div className="grid grid-cols-3 gap-2 rounded-[28px] bg-[#ecf7f7] p-1.5 animate-fade-up">
+      <div className="grid grid-cols-3 gap-2 rounded-[22px] bg-[#ecf7f7] p-1.5 animate-fade-up">
         {modeItems.map((item) => (
           <button
             key={item.key}
@@ -106,7 +99,7 @@ export function TransactionForm({
             disabled={isEditing}
             onClick={() => setEntryType(item.key)}
             className={cn(
-              'rounded-[22px] px-3 py-3.5 text-sm font-semibold transition duration-300',
+              'min-h-12 rounded-[17px] px-2 py-3 text-center text-sm font-semibold leading-tight transition duration-300',
               entryType === item.key ? 'bg-app-gradient text-white shadow-card' : 'text-app-muted',
               isEditing ? 'cursor-not-allowed opacity-70' : ''
             )}
@@ -118,19 +111,30 @@ export function TransactionForm({
 
       <div className="animate-fade-up [animation-delay:100ms]">
         <RupiahInput onValueChange={setAmount} initialValue={initialAmount} key={`amount-${editTransaction?.id ?? 'new'}`} />
-        <p className="mt-2 text-sm text-app-muted">Tips: cukup ketik angka. Titik pemisah ribuan akan diatur otomatis.</p>
       </div>
 
       <Card className="animate-fade-up space-y-4 [animation-delay:160ms]">
         {entryType !== 'investment' ? (
-          <div className="grid grid-cols-2 gap-2">
-            {filteredCategories.map((category: CategoryItem) => (
-              <label key={category.id} className="cursor-pointer">
-                <input type="radio" name="categoryId" value={category.id} className="peer sr-only" required defaultChecked={initialCategoryId === category.id} />
-                <span className="flex h-14 items-center justify-center rounded-[20px] border border-app-line bg-[#fbfefe] px-3 text-base font-medium text-app-text transition duration-300 peer-checked:border-transparent peer-checked:bg-app-gradient peer-checked:text-white">{category.name}</span>
-              </label>
-            ))}
-          </div>
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-app-text">Kategori</p>
+              <span className="text-xs font-medium text-app-muted">{filteredCategories.length} pilihan</span>
+            </div>
+            {filteredCategories.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {filteredCategories.map((category: CategoryItem) => (
+                  <label key={category.id} className="cursor-pointer">
+                    <input type="radio" name="categoryId" value={category.id} className="peer sr-only" required defaultChecked={initialCategoryId === category.id} />
+                    <span className="flex min-h-14 items-center justify-center rounded-[18px] border border-app-line bg-[#fbfefe] px-3 py-3 text-center text-sm font-semibold leading-tight text-app-text transition duration-300 peer-checked:border-transparent peer-checked:bg-app-gradient peer-checked:text-white">{category.name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[18px] border border-[#ffd7d1] bg-[#fff8f5] px-4 py-3 text-sm font-medium text-[#b95c50]">
+                Kategori untuk jenis transaksi ini belum tersedia.
+              </div>
+            )}
+          </>
         ) : isEditing ? (
           <div className="rounded-[20px] border border-[#d9eceb] bg-[#f9fdfd] px-4 py-3">
             <p className="text-sm font-semibold text-app-text">Aset investasi</p>
@@ -152,7 +156,7 @@ export function TransactionForm({
 
         <label className="block space-y-2">
           <span className="text-sm font-semibold text-app-text">Tanggal</span>
-          <input name="transactionDate" type="date" required className="h-[52px] w-full rounded-[20px] border border-app-line bg-white px-4 text-base transition duration-300 focus:border-app-accent focus:shadow-[0_0_0_4px_rgba(32,200,199,0.14)]" defaultValue={toDateInputValue(editTransaction?.transactionDate)} />
+          <input name="transactionDate" type="date" required className="h-[52px] w-full rounded-[20px] border border-app-line bg-white px-4 text-base transition duration-300 focus:border-app-accent focus:shadow-[0_0_0_4px_rgba(32,200,199,0.14)]" defaultValue={dateValue} />
           <p className="text-xs leading-5 text-app-muted">Gunakan tanggal transaksi sebenarnya agar laporan bulanan akurat.</p>
         </label>
 
